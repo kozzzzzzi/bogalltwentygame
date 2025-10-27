@@ -1,45 +1,55 @@
-// server.js
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
 
 const app = express();
-app.use(cors());
+
+// 프론트에서 접근 허용할 도메인들
+const ALLOWED_ORIGINS = [
+  "https://oopp.kr",
+  "http://oopp.kr",
+  "http://localhost:3000",
+  "http://localhost:5173"
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Render의 헬스체크나 같은-origin 호출은 origin이 빈값일 수도 있다.
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS blocked: " + origin));
+    }
+  }
+}));
 
 const server = http.createServer(app);
+
 const io = new Server(server, {
   cors: {
-    origin: "*",             // <- 나중에 실제 프론트 URL로 제한해도 됨
+    origin: ALLOWED_ORIGINS,
     methods: ["GET", "POST"]
   }
 });
 
 /*
 rooms[roomCode] = {
-  word: "아이폰",
-  wordLocked: true,
-  hostId: "socket1",
-  hostName: "출제자",
-  guessers: [ {id:"socket2", name:"참가자1"}, ... ],
-
-  chat: [
-    { type:"q", id:1, from:"참가자1", text:"전자기기인가요?" },
-    { type:"a", qid:1, from:"출제자", kind:"yes" },
-    { type:"hint", from:"출제자", text:"거의 항상 들고다님" }
-  ],
-
-  lastQuestionId: 1,
-  questionCount: 1,
-  waitingForAnswer: 1,
-
+  word: null,
+  wordLocked: false,
+  hostId: "socketId",
+  hostName: "닉",
+  guessers: [ {id, name}, ... ],
+  chat: [],
+  lastQuestionId: 0,
+  questionCount: 0,
+  waitingForAnswer: null,
   gameOver: false,
   gameResultForHost: null,      // "hostWin" | "hostLose"
   gameResultForGuesser: null,   // "guesserWin" | "guesserLose"
   finalWordShown: false
 };
 */
-
 const rooms = {};
 
 function endGameGuesserLose(room) {
@@ -110,13 +120,12 @@ io.on("connection", (socket) => {
   socket.on("joinRoom", ({ roomCode, nickname }) => {
     const room = rooms[roomCode];
     if (!room) {
-      socket.emit("errorMsg", "존재하지 않는 방 코드입니다.");
+      socket.emit("errorMsg", "없는 방 코드입니다.");
       return;
     }
 
     socket.join(roomCode);
 
-    // guessers 목록에 등록
     if (!room.guessers.find((g) => g.id === socket.id)) {
       room.guessers.push({
         id: socket.id,
@@ -124,7 +133,6 @@ io.on("connection", (socket) => {
       });
     }
 
-    // 방에 들어온 사람에게 현재 상태 전달
     socket.emit("roomJoined", {
       role: socket.id === room.hostId ? "host" : "guesser",
       roomCode,
@@ -138,7 +146,6 @@ io.on("connection", (socket) => {
       finalWord: room.finalWordShown ? room.word : undefined
     });
 
-    // 방 전체에게 히스토리/상태 브로드캐스트
     io.to(roomCode).emit("chatUpdate", {
       items: room.chat,
       questionCount: room.questionCount,
@@ -162,12 +169,10 @@ io.on("connection", (socket) => {
     room.word = word.trim();
     room.wordLocked = true;
 
-    // 모든 참가자에게 현재 상태 다시 알려서
-    // 참가자 쪽에서 "아직 단어 설정 안됨" 메시지 없어지게
     io.to(roomCode).emit("roomState", {
-      role: null, // 각 클라이언트가 role은 기존값 유지
+      role: null,
       roomCode,
-      word: undefined, // 출제자 외에는 안 보냄
+      word: undefined,
       wordLocked: room.wordLocked,
       questionCount: room.questionCount,
       waitingForAnswer: room.waitingForAnswer,
@@ -177,7 +182,6 @@ io.on("connection", (socket) => {
       finalWord: room.finalWordShown ? room.word : undefined
     });
 
-    // 출제자에게만 단어 포함해서 별도로 다시 보내도 됨
     io.to(room.hostId).emit("roomState", {
       role: "host",
       roomCode,
@@ -210,24 +214,17 @@ io.on("connection", (socket) => {
     io.to(roomCode).emit("newHint", hintMsg);
   });
 
-  // 참가자(출제자 제외): 질문
+  // 참가자: 질문
   socket.on("askQuestion", ({ roomCode, text, nickname }) => {
     const room = rooms[roomCode];
     if (!room) return;
     if (room.gameOver) return;
     if (!text || !text.trim()) return;
 
-    // 출제자는 질문 불가
-    if (socket.id === room.hostId) return;
+    if (socket.id === room.hostId) return;            // 출제자는 질문 불가
+    if (!room.wordLocked || !room.word) return;       // 단어 미설정이면 불가
+    if (room.waitingForAnswer) return;                // 이전 질문 답변 대기중이면 불가
 
-    // 단어 아직 없으면 질문 불가
-    if (!room.wordLocked || !room.word) return;
-
-    // 아직 답 안 된 질문이 있으면 새 질문 불가
-    if (room.waitingForAnswer) return;
-
-    // 여기서는 질문 카운트 증가만 하고 끝.
-    // (패배 판정은 answerQuestion에서 한다)
     room.lastQuestionId += 1;
     room.questionCount += 1;
 
@@ -275,8 +272,8 @@ io.on("connection", (socket) => {
     };
     room.chat.push(a);
 
-    // 정답 맞췄으면 -> 참가자 승리, 단어 공개, 방 삭제
     if (kind === "correct") {
+      // 참가자 승리 (출제자 패배)
       endGameGuesserWin(room);
 
       io.to(roomCode).emit("newAnswer", {
@@ -300,14 +297,13 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // 정답이 아니면: 질문은 해결됐으므로 다음 질문 가능
+    // 정답이 아니면 다음 질문 가능
     room.waitingForAnswer = null;
 
-    // 만약 지금까지 질문 수가 20 이상이면, 여기서 참가자 패배 처리
+    // 질문을 이미 20개 썼으면 여기서 참가자 패배 확정
     if (room.questionCount >= 20) {
       endGameGuesserLose(room);
 
-      // 마지막 답변 브로드캐스트 포함
       io.to(roomCode).emit("newAnswer", {
         ...a,
         questionCount: room.questionCount,
@@ -329,7 +325,7 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // 아직 게임 안 끝난 경우: 그냥 답변만 뿌림
+    // 아직 안 끝났으면 그냥 답만 뿌리기
     io.to(roomCode).emit("newAnswer", {
       ...a,
       questionCount: room.questionCount,
@@ -343,7 +339,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    // 여기선 굳이 방 정리 안 함
+    // 여기선 즉시 방 삭제 안 함. 방 삭제는 게임 끝났을 때만.
   });
 });
 
