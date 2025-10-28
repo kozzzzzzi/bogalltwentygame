@@ -386,19 +386,26 @@ socket.on("joinRoom", ({ roomCode, name }) => {
   const room = rooms[roomCode];
   if (!room) return;
 
+  // 이미 들어와 있는지 확인 (중복 방지)
+  const already = room.guessers.find(g => g.id === socket.id);
+  if (already) {
+    return; // 이미 등록돼 있으면 아래 로직(채팅 push 등) 안 탄다
+  }
+
   // 참가자 추가
   const player = { id: socket.id, name };
   room.guessers.push(player);
+
   socket.join(roomCode);
 
-  // ✅ 입장 알림 메시지 추가
+  // 입장 알림
   room.chat.push({
     type: "system",
     from: "[SYSTEM]",
     text: `${name || "참가자"} 님이 입장했습니다.`
   });
 
-  // 인원 목록 및 채팅 상태 방송
+  // 상태 브로드캐스트
   emitPlayers(roomCode);
   emitRoomChatState(roomCode);
 });
