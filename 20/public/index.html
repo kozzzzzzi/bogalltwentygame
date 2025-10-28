@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <title>보갤스무고개</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Tailwind CDN (개발/테스트 용. 프로덕션 경고는 무시 가능) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- socket.io client CDN (integrity/crossorigin 제거) -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+    <!-- React / ReactDOM CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+
+    <style>
+      body {
+        background: radial-gradient(circle at 20% 20%, #ffffff 0%, #f3f4f6 80%);
+        color: #111827;
+      }
+
+      .card {
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        border-radius: 1rem;
+        color: #111827;
+      }
+
+      .bubble-q {
+        background-color: #f3f4f6;
+        border: 1px solid #e5e7eb;
+        border-radius: 0.75rem;
+      }
+
+      .bubble-a {
+        background-color: #111827;
+        color: #fff;
+        border-radius: 0.75rem;
+      }
+
+      .bubble-correct {
+        background-color: #34d399;
+        color: #065f46;
+        border-radius: 0.75rem;
+        font-weight: 600;
+        box-shadow: 0 10px 20px rgba(16,185,129,0.4);
+      }
+
+      .bubble-hint {
+        background-color: #6366f1;
+        color: #fff;
+        border-radius: 0.75rem;
+        font-weight: 600;
+        box-shadow: 0 10px 20px rgba(99,102,241,0.4);
+      }
+
+      .scrollbar-thin::-webkit-scrollbar {
+        width: 4px;
+      }
+      .scrollbar-thin::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      .scrollbar-thin::-webkit-scrollbar-thumb {
+        background-color: #d1d5db;
+        border-radius: 9999px;
+      }
+
+      .input-light {
+        background-color: #fff;
+        border: 1px solid #d1d5db;
+        color: #111827;
+      }
+      .input-light:disabled {
+        background-color: #e5e7eb;
+        color: #9ca3af;
+        cursor: not-allowed;
+      }
+
+      .badge-role {
+        background-color: #111827;
+        color: #fff;
+        border-radius: 0.375rem;
+        font-size: 0.7rem;
+        padding: 0.25rem 0.5rem;
+      }
+    </style>
+  </head>
+
+  <body class="min-h-screen flex items-center justify-center p-4">
+    <div id="root" class="w-full max-w-5xl"></div>
+
+    <!-- app.js는 이 아래에서 로드 -->
+    <script src="app.js"></script>
+  </body>
+</html>
