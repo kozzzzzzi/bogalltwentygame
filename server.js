@@ -339,8 +339,17 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    // 여기선 즉시 방 삭제 안 함. 방 삭제는 게임 끝났을 때만.
-  });
+  // 이 소켓이 방장이었던 방을 찾아서 바로 정리
+  for (const [roomCode, room] of Object.entries(rooms)) {
+    if (room.hostId === socket.id) {
+      // 방장 나갔으므로 방 안에 남아 있는 참가자들에게 알림 (선택사항)
+      io.to(roomCode).emit("roomClosed");
+
+      // 방 자체 삭제
+      cleanupRoom(roomCode);
+    }
+  }
+});
 });
 
 const PORT = process.env.PORT || 3000;
