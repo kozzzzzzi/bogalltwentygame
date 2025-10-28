@@ -380,83 +380,107 @@ io.on("connection", (socket) => {
   });
 
 
-  // ====== 새로 추가: 출제자가 참가자 강퇴 ======
-  // payload: { roomCode, playerId }
-  socket.on("kickPlayer", ({ roomCode, playerId }) => {
-    const room = rooms[roomCode];
-    if (!room) return;
+  // ====== 참가자 입장 처리 ======
+// payload: { roomCode, name }
+socket.on("joinRoom", ({ roomCode, name }) => {
+  const room = rooms[roomCode];
+  if (!room) return;
 
-    // 권한 체크: 이 요청을 보낸 소켓이 방의 host여야만 함
-    if (socket.id !== room.hostId) {
-      return;
-    }
+  // 참가자 추가
+  const player = { id: socket.id, name };
+  room.guessers.push(player);
+  socket.join(roomCode);
 
-    // 호스트 자신은 강퇴 불가
-    if (playerId === room.hostId) return;
-
-    const idx = room.guessers.findIndex((g) => g.id === playerId);
-    if (idx === -1) {
-      return;
-    }
-
-    // 참가자 목록에서 제거
-    const [removed] = room.guessers.splice(idx, 1);
-
-    // 강퇴 대상 소켓 찾아서 알림
-    const kickedSocket = io.sockets.sockets.get(playerId);
-    if (kickedSocket) {
-      kickedSocket.leave(roomCode);
-      kickedSocket.emit("kicked", { reason: "host_kick" });
-      // 완전 연결 강제로 끊고 싶으면 아래 주석 해제
-      // kickedSocket.disconnect(true);
-    }
-
-    // 시스템 메시지로 채팅 로그에 남겨도 됨
-    room.chat.push({
-      type: "system",
-      from: "[SYSTEM]",
-      text: `${removed.name || "참가자"} 님이 강퇴되었습니다.`
-    });
-
-    // 인원 목록과 채팅상태 다시 방송
-    emitPlayers(roomCode);
-    emitRoomChatState(roomCode);
+  // ✅ 입장 알림 메시지 추가
+  room.chat.push({
+    type: "system",
+    from: "[SYSTEM]",
+    text: `${name || "참가자"} 님이 입장했습니다.`
   });
 
+  // 인원 목록 및 채팅 상태 방송
+  emitPlayers(roomCode);
+  emitRoomChatState(roomCode);
+});
 
-  // ====== 연결 해제 처리 ======
-  socket.on("disconnect", () => {
-    // 1) 방장(출제자)였던 방 정리
-    for (const [roomCode, room] of Object.entries(rooms)) {
-      if (!room) continue;
 
-      if (room.hostId === socket.id) {
-        // 방장 나갔으므로 방 안에 남아 있는 참가자들에게 알림
-        io.to(roomCode).emit("roomClosed");
+// ====== 새로 추가: 출제자가 참가자 강퇴 ======
+// payload: { roomCode, playerId }
+socket.on("kickPlayer", ({ roomCode, playerId }) => {
+  const room = rooms[roomCode];
+  if (!room) return;
 
-        // 방 삭제
-        cleanupRoom(roomCode);
-        continue;
-      }
+  // 권한 체크: 이 요청을 보낸 소켓이 방의 host여야만 함
+  if (socket.id !== room.hostId) {
+    return;
+  }
 
-      // 2) 참가자였던 방 정리
-      const idx = room.guessers.findIndex((g) => g.id === socket.id);
-      if (idx !== -1) {
-        const [leaver] = room.guessers.splice(idx, 1);
+  // 호스트 자신은 강퇴 불가
+  if (playerId === room.hostId) return;
 
-        // 시스템 메시지 추가
-        room.chat.push({
-          type: "system",
-          from: "[SYSTEM]",
-          text: `${leaver.name || "참가자"} 님이 나갔습니다.`
-        });
+  const idx = room.guessers.findIndex((g) => g.id === playerId);
+  if (idx === -1) {
+    return;
+  }
 
-        // 남아있는 사람들에게 최신 상태 전송
-        emitPlayers(roomCode);
-        emitRoomChatState(roomCode);
-      }
-    }
+  // 참가자 목록에서 제거
+  const [removed] = room.guessers.splice(idx, 1);
+
+  // 강퇴 대상 소켓 찾아서 알림
+  const kickedSocket = io.sockets.sockets.get(playerId);
+  if (kickedSocket) {
+    kickedSocket.leave(roomCode);
+    kickedSocket.emit("kicked", { reason: "host_kick" });
+    // 완전 연결 강제로 끊고 싶으면 아래 주석 해제
+    // kickedSocket.disconnect(true);
+  }
+
+  // 시스템 메시지로 채팅 로그에 남김
+  room.chat.push({
+    type: "system",
+    from: "[SYSTEM]",
+    text: `${removed.name || "참가자"} 님이 강퇴되었습니다.`
   });
+
+  // 인원 목록과 채팅상태 다시 방송
+  emitPlayers(roomCode);
+  emitRoomChatState(roomCode);
+});
+
+
+// ====== 연결 해제 처리 ======
+socket.on("disconnect", () => {
+  // 1) 방장(출제자)였던 방 정리
+  for (const [roomCode, room] of Object.entries(rooms)) {
+    if (!room) continue;
+
+    if (room.hostId === socket.id) {
+      // 방장 나갔으므로 방 안에 남아 있는 참가자들에게 알림
+      io.to(roomCode).emit("roomClosed");
+
+      // 방 삭제
+      cleanupRoom(roomCode);
+      continue;
+    }
+
+    // 2) 참가자였던 방 정리
+    const idx = room.guessers.findIndex((g) => g.id === socket.id);
+    if (idx !== -1) {
+      const [leaver] = room.guessers.splice(idx, 1);
+
+      // 시스템 메시지 추가
+      room.chat.push({
+        type: "system",
+        from: "[SYSTEM]",
+        text: `${leaver.name || "참가자"} 님이 나갔습니다.`
+      });
+
+      // 남아있는 사람들에게 최신 상태 전송
+      emitPlayers(roomCode);
+      emitRoomChatState(roomCode);
+    }
+  }
+});
 });
 
 const PORT = process.env.PORT || 3000;
