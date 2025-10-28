@@ -43,7 +43,7 @@ rooms[roomCode] = {
   chat: [],
   lastQuestionId: 0,
   questionCount: 0,
-  waitingForAnswer: null,
+  waitingForAnswer: 0 | null,
   gameOver: false,
   gameResultForHost: null,      // "hostWin" | "hostLose"
   gameResultForGuesser: null,   // "guesserWin" | "guesserLose"
@@ -52,6 +52,7 @@ rooms[roomCode] = {
 */
 const rooms = {};
 
+// ====== 게임 종료 유틸 ======
 function endGameGuesserLose(room) {
   room.gameOver = true;
   room.gameResultForHost = "hostWin";
@@ -70,7 +71,35 @@ function cleanupRoom(roomCode) {
   delete rooms[roomCode];
 }
 
+// ====== 새로 추가: 방 참가자 목록 브로드캐스트 ======
+function emitPlayers(roomCode) {
+  const room = rooms[roomCode];
+  if (!room) return;
+  io.to(roomCode).emit("playersUpdate", {
+    hostId: room.hostId,
+    hostName: room.hostName,
+    guessers: room.guessers || []
+  });
+}
+
+// ====== 새로 추가: 방의 전체 상태(채팅/질문수 등) 브로드캐스트 ======
+function emitRoomChatState(roomCode) {
+  const room = rooms[roomCode];
+  if (!room) return;
+  io.to(roomCode).emit("chatUpdate", {
+    items: room.chat,
+    questionCount: room.questionCount,
+    waitingForAnswer: room.waitingForAnswer,
+    wordLocked: room.wordLocked,
+    gameOver: room.gameOver,
+    gameResultForHost: room.gameResultForHost,
+    gameResultForGuesser: room.gameResultForGuesser,
+    finalWord: room.finalWordShown ? room.word : undefined
+  });
+}
+
 io.on("connection", (socket) => {
+
   // 출제자: 방 만들기
   socket.on("createRoom", ({ roomCode, nickname }) => {
     if (!roomCode) {
@@ -114,6 +143,10 @@ io.on("connection", (socket) => {
       gameResultForGuesser: null,
       finalWord: undefined
     });
+
+    // 새로 추가: 참가자 목록/상태 브로드캐스트
+    emitPlayers(roomCode);
+    emitRoomChatState(roomCode);
   });
 
   // 참가자(정답자들): 방 참여 (여러 명 허용)
@@ -146,16 +179,11 @@ io.on("connection", (socket) => {
       finalWord: room.finalWordShown ? room.word : undefined
     });
 
-    io.to(roomCode).emit("chatUpdate", {
-      items: room.chat,
-      questionCount: room.questionCount,
-      waitingForAnswer: room.waitingForAnswer,
-      wordLocked: room.wordLocked,
-      gameOver: room.gameOver,
-      gameResultForHost: room.gameResultForHost,
-      gameResultForGuesser: room.gameResultForGuesser,
-      finalWord: room.finalWordShown ? room.word : undefined
-    });
+    // 방 전체에 현재 채팅/상태를 쏴줌
+    emitRoomChatState(roomCode);
+
+    // 새로 추가: 참가자 목록 브로드캐스트
+    emitPlayers(roomCode);
   });
 
   // 출제자: 단어 설정 (1번만)
@@ -169,6 +197,7 @@ io.on("connection", (socket) => {
     room.word = word.trim();
     room.wordLocked = true;
 
+    // 모두에게 상태 전송 (단, 단어 자체는 안 보여줌)
     io.to(roomCode).emit("roomState", {
       role: null,
       roomCode,
@@ -182,6 +211,7 @@ io.on("connection", (socket) => {
       finalWord: room.finalWordShown ? room.word : undefined
     });
 
+    // 출제자한테만 정답 단어 포함해서 다시 전송
     io.to(room.hostId).emit("roomState", {
       role: "host",
       roomCode,
@@ -211,7 +241,11 @@ io.on("connection", (socket) => {
     };
     room.chat.push(hintMsg);
 
+    // 클라이언트 쪽은 newHint를 듣고 채팅 추가할 수 있음
     io.to(roomCode).emit("newHint", hintMsg);
+
+    // 채팅 전체 상태도 갱신해서 보내주자
+    emitRoomChatState(roomCode);
   });
 
   // 참가자: 질문
@@ -254,6 +288,9 @@ io.on("connection", (socket) => {
       gameResultForGuesser: room.gameResultForGuesser,
       finalWord: room.finalWordShown ? room.word : undefined
     });
+
+    // 채팅 전체 상태도 갱신
+    emitRoomChatState(roomCode);
   });
 
   // 출제자: 답변
@@ -293,6 +330,7 @@ io.on("connection", (socket) => {
         finalWord: room.finalWordShown ? room.word : undefined
       });
 
+      // 게임 종료 후 방 삭제
       cleanupRoom(roomCode);
       return;
     }
@@ -336,20 +374,89 @@ io.on("connection", (socket) => {
       gameResultForGuesser: room.gameResultForGuesser,
       finalWord: room.finalWordShown ? room.word : undefined
     });
+
+    // 채팅 전체 상태도 갱신
+    emitRoomChatState(roomCode);
   });
 
-  socket.on("disconnect", () => {
-  // 이 소켓이 방장이었던 방을 찾아서 바로 정리
-  for (const [roomCode, room] of Object.entries(rooms)) {
-    if (room.hostId === socket.id) {
-      // 방장 나갔으므로 방 안에 남아 있는 참가자들에게 알림 (선택사항)
-      io.to(roomCode).emit("roomClosed");
 
-      // 방 자체 삭제
-      cleanupRoom(roomCode);
+  // ====== 새로 추가: 출제자가 참가자 강퇴 ======
+  // payload: { roomCode, playerId }
+  socket.on("kickPlayer", ({ roomCode, playerId }) => {
+    const room = rooms[roomCode];
+    if (!room) return;
+
+    // 권한 체크: 이 요청을 보낸 소켓이 방의 host여야만 함
+    if (socket.id !== room.hostId) {
+      return;
     }
-  }
-});
+
+    // 호스트 자신은 강퇴 불가
+    if (playerId === room.hostId) return;
+
+    const idx = room.guessers.findIndex((g) => g.id === playerId);
+    if (idx === -1) {
+      return;
+    }
+
+    // 참가자 목록에서 제거
+    const [removed] = room.guessers.splice(idx, 1);
+
+    // 강퇴 대상 소켓 찾아서 알림
+    const kickedSocket = io.sockets.sockets.get(playerId);
+    if (kickedSocket) {
+      kickedSocket.leave(roomCode);
+      kickedSocket.emit("kicked", { reason: "host_kick" });
+      // 완전 연결 강제로 끊고 싶으면 아래 주석 해제
+      // kickedSocket.disconnect(true);
+    }
+
+    // 시스템 메시지로 채팅 로그에 남겨도 됨
+    room.chat.push({
+      type: "system",
+      from: "[SYSTEM]",
+      text: `${removed.name || "참가자"} 님이 강퇴되었습니다.`
+    });
+
+    // 인원 목록과 채팅상태 다시 방송
+    emitPlayers(roomCode);
+    emitRoomChatState(roomCode);
+  });
+
+
+  // ====== 연결 해제 처리 ======
+  socket.on("disconnect", () => {
+    // 1) 방장(출제자)였던 방 정리
+    for (const [roomCode, room] of Object.entries(rooms)) {
+      if (!room) continue;
+
+      if (room.hostId === socket.id) {
+        // 방장 나갔으므로 방 안에 남아 있는 참가자들에게 알림
+        io.to(roomCode).emit("roomClosed");
+
+        // 방 삭제
+        cleanupRoom(roomCode);
+        continue;
+      }
+
+      // 2) 참가자였던 방 정리
+      const idx = room.guessers.findIndex((g) => g.id === socket.id);
+      if (idx !== -1) {
+        const [leaver] = room.guessers.splice(idx, 1);
+
+        // 시스템 메시지 추가
+        room.chat.push({
+          type: "system",
+          from: "[SYSTEM]",
+          text: `${leaver.name || "참가자"} 님이 나갔습니다.`
+        });
+
+        // 남아있는 사람들에게 최신 상태 전송
+        emitPlayers(roomCode);
+        emitRoomChatState(roomCode);
+      }
+    }
+  });
 });
 
 const PORT = process.env.PORT || 3000;
