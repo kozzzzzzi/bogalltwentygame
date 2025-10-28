@@ -71,7 +71,7 @@ function cleanupRoom(roomCode) {
   delete rooms[roomCode];
 }
 
-// ====== 새로 추가: 방 참가자 목록 브로드캐스트 ======
+// ====== 방 참가자 목록 브로드캐스트 ======
 function emitPlayers(roomCode) {
   const room = rooms[roomCode];
   if (!room) return;
@@ -82,7 +82,7 @@ function emitPlayers(roomCode) {
   });
 }
 
-// ====== 새로 추가: 방의 전체 상태(채팅/질문수 등) 브로드캐스트 ======
+// ====== 방의 전체 상태(채팅/질문수 등) 브로드캐스트 ======
 function emitRoomChatState(roomCode) {
   const room = rooms[roomCode];
   if (!room) return;
@@ -144,12 +144,12 @@ io.on("connection", (socket) => {
       finalWord: undefined
     });
 
-    // 새로 추가: 참가자 목록/상태 브로드캐스트
+    // 참가자 목록/상태 브로드캐스트
     emitPlayers(roomCode);
     emitRoomChatState(roomCode);
   });
 
-  // 참가자(정답자들): 방 참여 (여러 명 허용)
+  // 참가자: 방 참여
   socket.on("joinRoom", ({ roomCode, nickname }) => {
     const room = rooms[roomCode];
     if (!room) {
@@ -179,14 +179,14 @@ io.on("connection", (socket) => {
       finalWord: room.finalWordShown ? room.word : undefined
     });
 
-    // 방 전체에 현재 채팅/상태를 쏴줌
+    // 현재 채팅/상태를 쏴줌
     emitRoomChatState(roomCode);
 
-    // 새로 추가: 참가자 목록 브로드캐스트
+    // 참가자 목록 브로드캐스트
     emitPlayers(roomCode);
   });
 
-  // 출제자: 단어 설정 (1번만)
+  // 출제자: 단어 설정
   socket.on("setWord", ({ roomCode, word }) => {
     const room = rooms[roomCode];
     if (!room) return;
@@ -197,7 +197,7 @@ io.on("connection", (socket) => {
     room.word = word.trim();
     room.wordLocked = true;
 
-    // 모두에게 상태 전송 (단, 단어 자체는 안 보여줌)
+    // 모두에게 상태 전송 (단어 자체는 숨김)
     io.to(roomCode).emit("roomState", {
       role: null,
       roomCode,
@@ -211,7 +211,7 @@ io.on("connection", (socket) => {
       finalWord: room.finalWordShown ? room.word : undefined
     });
 
-    // 출제자한테만 정답 단어 포함해서 다시 전송
+    // 출제자에게만 정답 단어 포함
     io.to(room.hostId).emit("roomState", {
       role: "host",
       roomCode,
@@ -226,7 +226,7 @@ io.on("connection", (socket) => {
     });
   });
 
-  // 출제자: 힌트 보내기
+  // 출제자: 힌트
   socket.on("sendHint", ({ roomCode, text }) => {
     const room = rooms[roomCode];
     if (!room) return;
@@ -241,10 +241,10 @@ io.on("connection", (socket) => {
     };
     room.chat.push(hintMsg);
 
-    // 클라이언트 쪽은 newHint를 듣고 채팅 추가할 수 있음
+    // 개별 푸시
     io.to(roomCode).emit("newHint", hintMsg);
 
-    // 채팅 전체 상태도 갱신해서 보내주자
+    // 전체 동기화
     emitRoomChatState(roomCode);
   });
 
@@ -255,9 +255,14 @@ io.on("connection", (socket) => {
     if (room.gameOver) return;
     if (!text || !text.trim()) return;
 
-    if (socket.id === room.hostId) return;            // 출제자는 질문 불가
-    if (!room.wordLocked || !room.word) return;       // 단어 미설정이면 불가
-    if (room.waitingForAnswer) return;                // 이전 질문 답변 대기중이면 불가
+    // 출제자는 질문 금지
+    if (socket.id === room.hostId) return;
+
+    // 단어 설정 안 됐으면 금지
+    if (!room.wordLocked || !room.word) return;
+
+    // 이전 질문 답변 대기 중이면 금지
+    if (room.waitingForAnswer) return;
 
     room.lastQuestionId += 1;
     room.questionCount += 1;
@@ -289,7 +294,6 @@ io.on("connection", (socket) => {
       finalWord: room.finalWordShown ? room.word : undefined
     });
 
-    // 채팅 전체 상태도 갱신
     emitRoomChatState(roomCode);
   });
 
@@ -330,7 +334,7 @@ io.on("connection", (socket) => {
         finalWord: room.finalWordShown ? room.word : undefined
       });
 
-      // 게임 종료 후 방 삭제
+      // 방 종료
       cleanupRoom(roomCode);
       return;
     }
@@ -338,7 +342,7 @@ io.on("connection", (socket) => {
     // 정답이 아니면 다음 질문 가능
     room.waitingForAnswer = null;
 
-    // 질문을 이미 20개 썼으면 여기서 참가자 패배 확정
+    // 질문 20개 쓰면 참가자 패배
     if (room.questionCount >= 20) {
       endGameGuesserLose(room);
 
@@ -363,7 +367,7 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // 아직 안 끝났으면 그냥 답만 뿌리기
+    // 아직 안 끝났으면 답만 뿌림
     io.to(roomCode).emit("newAnswer", {
       ...a,
       questionCount: room.questionCount,
@@ -375,18 +379,52 @@ io.on("connection", (socket) => {
       finalWord: room.finalWordShown ? room.word : undefined
     });
 
-    // 채팅 전체 상태도 갱신
     emitRoomChatState(roomCode);
   });
 
+  // ====== [NEW CHAT] 참가자/출제자 일반 채팅 메시지 ======
+  // payload: { roomCode, text, nickname }
+  // 이건 질문/힌트랑 별개로 그냥 자유 채팅
+  socket.on("sendChatMessage", ({ roomCode, text, nickname }) => {
+    const room = rooms[roomCode];
+    if (!room) return;
+    if (!text || !text.trim()) return;
 
-  // ====== 새로 추가: 출제자가 참가자 강퇴 ======
+    // 닉 결정: 넘어온 nickname이 우선, 없으면 guessers/host에서 찾는다
+    let senderName = nickname && nickname.trim();
+    if (!senderName) {
+      if (socket.id === room.hostId) {
+        senderName = room.hostName || "출제자";
+      } else {
+        const g = room.guessers.find((gg) => gg.id === socket.id);
+        senderName = g ? g.name : "참가자";
+      }
+    }
+
+    const chatMsg = {
+      type: "chat",
+      from: senderName,
+      text: text.trim(),
+      ts: Date.now()
+    };
+
+    // 로그에 추가
+    room.chat.push(chatMsg);
+
+    // 방 전체에 새 메시지 밀어주기
+    io.to(roomCode).emit("newChatMessage", chatMsg);
+
+    // 전체 상태도 동기화해주면 프론트가 새로 들어온 애도 consistent
+    emitRoomChatState(roomCode);
+  });
+
+  // ====== 출제자가 참가자 강퇴 ======
   // payload: { roomCode, playerId }
   socket.on("kickPlayer", ({ roomCode, playerId }) => {
     const room = rooms[roomCode];
     if (!room) return;
 
-    // 권한 체크: 이 요청을 보낸 소켓이 방의 host여야만 함
+    // 권한 체크: 요청한 소켓이 방의 host여야만 함
     if (socket.id !== room.hostId) {
       return;
     }
@@ -407,22 +445,20 @@ io.on("connection", (socket) => {
     if (kickedSocket) {
       kickedSocket.leave(roomCode);
       kickedSocket.emit("kicked", { reason: "host_kick" });
-      // 완전 연결 강제로 끊고 싶으면 아래 주석 해제
-      // kickedSocket.disconnect(true);
+      // kickedSocket.disconnect(true); // 강제 연결 종료하고 싶으면 주석 해제
     }
 
-    // 시스템 메시지로 채팅 로그에 남겨도 됨
+    // 시스템 메시지로 기록
     room.chat.push({
       type: "system",
       from: "[SYSTEM]",
       text: `${removed.name || "참가자"} 님이 강퇴되었습니다.`
     });
 
-    // 인원 목록과 채팅상태 다시 방송
+    // 최신 상태 방송
     emitPlayers(roomCode);
     emitRoomChatState(roomCode);
   });
-
 
   // ====== 연결 해제 처리 ======
   socket.on("disconnect", () => {
@@ -431,10 +467,8 @@ io.on("connection", (socket) => {
       if (!room) continue;
 
       if (room.hostId === socket.id) {
-        // 방장 나갔으므로 방 안에 남아 있는 참가자들에게 알림
+        // 방장 나감 -> 방 폭파
         io.to(roomCode).emit("roomClosed");
-
-        // 방 삭제
         cleanupRoom(roomCode);
         continue;
       }
@@ -443,6 +477,13 @@ io.on("connection", (socket) => {
       const idx = room.guessers.findIndex((g) => g.id === socket.id);
       if (idx !== -1) {
         const [leaver] = room.guessers.splice(idx, 1);
+
+        // 나간 사실은 시스템 메시지로 남겨도 상관없음 (선택)
+        // room.chat.push({
+        //   type: "system",
+        //   from: "[SYSTEM]",
+        //   text: `${leaver.name || "참가자"} 님이 퇴장했습니다.`
+        // });
 
         // 남아있는 사람들에게 최신 상태 전송
         emitPlayers(roomCode);
