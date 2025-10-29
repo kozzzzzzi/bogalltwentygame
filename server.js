@@ -445,7 +445,7 @@ io.on("connection", (socket) => {
         const autoHint2 = {
           type: "hint",
           from: room.hostName || "출제자",
-          text: `첫 글자 초성은 ${firstChosung} 입니다.`
+          text: `정답 단어의 첫 글자 초성은 ${firstChosung} 입니다.`
         };
         room.chat.push(autoHint2);
         io.to(roomCode).emit("newHint", autoHint2);
