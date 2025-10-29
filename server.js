@@ -228,25 +228,32 @@ io.on("connection", (socket) => {
 
   // 출제자: 힌트
   socket.on("sendHint", ({ roomCode, text }) => {
-    const room = rooms[roomCode];
-    if (!room) return;
-    if (socket.id !== room.hostId) return;
-    if (!text || !text.trim()) return;
-    if (room.gameOver) return;
+  const room = rooms[roomCode];
+  if (!room) return;
+  if (socket.id !== room.hostId) return;
+  if (!text || !text.trim()) return;
+  if (room.gameOver) return;
 
-    const hintMsg = {
-      type: "hint",
-      from: room.hostName || "출제자",
-      text: text.trim()
-    };
-    room.chat.push(hintMsg);
+  const trimmed = text.trim();
 
-    // 개별 푸시
-    io.to(roomCode).emit("newHint", hintMsg);
+  // 🔥 추가: 특수 이펙트 커맨드
+  if (trimmed === "/똥") {
+    // 모든 인원에게 이펙트 트리거만 쏨. 채팅에는 안 남김.
+    io.to(roomCode).emit("effect", { type: "poopRain" });
+    return;
+  }
 
-    // 전체 동기화
-    emitRoomChatState(roomCode);
-  });
+  // 기본 힌트 처리 (원래 코드)
+  const hintMsg = {
+    type: "hint",
+    from: room.hostName || "출제자",
+    text: trimmed
+  };
+  room.chat.push(hintMsg);
+
+  io.to(roomCode).emit("newHint", hintMsg);
+  emitRoomChatState(roomCode);
+});
 
   // 참가자: 질문
   socket.on("askQuestion", ({ roomCode, text, nickname }) => {
