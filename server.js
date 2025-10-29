@@ -270,7 +270,6 @@ io.on("connection", (socket) => {
     if (!room) return;
     if (socket.id !== room.hostId) return;
     if (!text || !text.trim()) return;
-    if (room.gameOver) return;
 
     const trimmed = text.trim();
 
@@ -380,7 +379,6 @@ io.on("connection", (socket) => {
       });
 
       // 방 삭제
-      cleanupRoom(roomCode);
       return;
     }
 
@@ -408,7 +406,6 @@ io.on("connection", (socket) => {
         finalWord: room.finalWordShown ? room.word : undefined
       });
 
-      cleanupRoom(roomCode);
       return;
     }
 
@@ -445,7 +442,7 @@ io.on("connection", (socket) => {
         const autoHint2 = {
           type: "hint",
           from: room.hostName || "출제자",
-          text: `정답 단어의 첫 글자 초성은 ${firstChosung} 입니다.`
+          text: `첫 글자 초성은 ${firstChosung} 입니다.`
         };
         room.chat.push(autoHint2);
         io.to(roomCode).emit("newHint", autoHint2);
