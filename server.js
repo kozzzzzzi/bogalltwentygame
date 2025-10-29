@@ -52,7 +52,7 @@ rooms[roomCode] = {
 */
 const rooms = {};
 
-// ====== 게임 종료 유틸 ======
+// ====== 유틸: 게임 종료 ======
 function endGameGuesserLose(room) {
   room.gameOver = true;
   room.gameResultForHost = "hostWin";
@@ -69,6 +69,32 @@ function endGameGuesserWin(room) {
 
 function cleanupRoom(roomCode) {
   delete rooms[roomCode];
+}
+
+// ====== 유틸: 한글 초성 추출 ======
+function computeChosung(word) {
+  if (!word || typeof word !== "string") return "?";
+
+  const CHO_LIST = [
+    "ㄱ","ㄲ","ㄴ","ㄷ","ㄸ","ㄹ","ㅁ","ㅂ","ㅃ","ㅅ",
+    "ㅆ","ㅇ","ㅈ","ㅉ","ㅊ","ㅋ","ㅌ","ㅍ","ㅎ"
+  ];
+
+  let result = [];
+  for (const ch of word) {
+    const code = ch.charCodeAt(0);
+    // 한글 범위 가~힣: 0xAC00 ~ 0xD7A3
+    if (code >= 0xAC00 && code <= 0xD7A3) {
+      const offset = code - 0xAC00;
+      const choIndex = Math.floor(offset / (21 * 28));
+      result.push(CHO_LIST[choIndex] || ch);
+    } else {
+      // 한글 완성형 아니면 그냥 원문 넣거나 무시할 수 있음.
+      // 여기서는 그냥 그 글자를 그대로 둔다.
+      result.push(ch);
+    }
+  }
+  return result.join("");
 }
 
 // ====== 방 참가자 목록 브로드캐스트 ======
@@ -179,7 +205,7 @@ io.on("connection", (socket) => {
       finalWord: room.finalWordShown ? room.word : undefined
     });
 
-    // 현재 채팅/상태를 쏴줌
+    // 현재 채팅/상태 전송
     emitRoomChatState(roomCode);
 
     // 참가자 목록 브로드캐스트
@@ -226,49 +252,49 @@ io.on("connection", (socket) => {
     });
   });
 
-  // 출제자: 힌트
+  // 출제자: 힌트 전송 (수동 힌트 + /똥 이펙트)
   socket.on("sendHint", ({ roomCode, text }) => {
-  const room = rooms[roomCode];
-  if (!room) return;
-  if (socket.id !== room.hostId) return;
-  if (!text || !text.trim()) return;
-  if (room.gameOver) return;
+    const room = rooms[roomCode];
+    if (!room) return;
+    if (socket.id !== room.hostId) return;
+    if (!text || !text.trim()) return;
+    if (room.gameOver) return;
 
-  const trimmed = text.trim();
+    const trimmed = text.trim();
 
-  // 🔥 추가: 특수 이펙트 커맨드
-  if (trimmed === "/똥") {
-    // 모든 인원에게 이펙트 트리거만 쏨. 채팅에는 안 남김.
-    io.to(roomCode).emit("effect", { type: "poopRain" });
-    return;
-  }
+    // 특수 이펙트 커맨드
+    if (trimmed === "/똥") {
+      // 이펙트 트리거만 쏨. 채팅 로그에는 안 남김.
+      io.to(roomCode).emit("effect", { type: "poopRain" });
+      return;
+    }
 
-  // 기본 힌트 처리 (원래 코드)
-  const hintMsg = {
-    type: "hint",
-    from: room.hostName || "출제자",
-    text: trimmed
-  };
-  room.chat.push(hintMsg);
+    // 일반 힌트
+    const hintMsg = {
+      type: "hint",
+      from: room.hostName || "출제자",
+      text: trimmed
+    };
+    room.chat.push(hintMsg);
 
-  io.to(roomCode).emit("newHint", hintMsg);
-  emitRoomChatState(roomCode);
-});
+    io.to(roomCode).emit("newHint", hintMsg);
+    emitRoomChatState(roomCode);
+  });
 
-  // 참가자: 질문
+  // 참가자: 질문 전송
   socket.on("askQuestion", ({ roomCode, text, nickname }) => {
     const room = rooms[roomCode];
     if (!room) return;
     if (room.gameOver) return;
     if (!text || !text.trim()) return;
 
-    // 출제자는 질문 금지
+    // 출제자는 질문 불가
     if (socket.id === room.hostId) return;
 
-    // 단어 설정 안 됐으면 금지
+    // 단어 설정 전이면 질문 불가
     if (!room.wordLocked || !room.word) return;
 
-    // 이전 질문 답변 대기 중이면 금지
+    // 이전 질문 답변 대기 중이면 불가
     if (room.waitingForAnswer) return;
 
     room.lastQuestionId += 1;
@@ -304,7 +330,7 @@ io.on("connection", (socket) => {
     emitRoomChatState(roomCode);
   });
 
-  // 출제자: 답변
+  // 출제자: 질문에 답변
   socket.on("answerQuestion", ({ roomCode, questionId, kind }) => {
     const room = rooms[roomCode];
     if (!room) return;
@@ -320,8 +346,8 @@ io.on("connection", (socket) => {
     };
     room.chat.push(a);
 
+    // 정답 맞춘 경우 → 참가자 승리
     if (kind === "correct") {
-      // 참가자 승리 (출제자 패배)
       endGameGuesserWin(room);
 
       io.to(roomCode).emit("newAnswer", {
@@ -341,15 +367,15 @@ io.on("connection", (socket) => {
         finalWord: room.finalWordShown ? room.word : undefined
       });
 
-      // 방 종료
+      // 방 삭제
       cleanupRoom(roomCode);
       return;
     }
 
-    // 정답이 아니면 다음 질문 가능
+    // 정답 아닌 경우 → 다음 질문 가능
     room.waitingForAnswer = null;
 
-    // 질문 20개 쓰면 참가자 패배
+    // 질문 20개 이상 → 참가자 패배
     if (room.questionCount >= 20) {
       endGameGuesserLose(room);
 
@@ -374,7 +400,7 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // 아직 안 끝났으면 답만 뿌림
+    // 여기까지 왔으면 게임은 아직 진행 중
     io.to(roomCode).emit("newAnswer", {
       ...a,
       questionCount: room.questionCount,
@@ -386,18 +412,47 @@ io.on("connection", (socket) => {
       finalWord: room.finalWordShown ? room.word : undefined
     });
 
+    // ====== 자동 힌트 로직 추가 ======
+    // 게임이 아직 안 끝났을 때만 자동 힌트 던진다.
+    if (!room.gameOver && room.word && room.wordLocked) {
+
+      // 10번째 질문: 글자수 힌트
+      if (room.questionCount === 10) {
+        const len = room.word.length;
+        const autoHint1 = {
+          type: "hint",
+          from: room.hostName || "출제자",
+          text: `정답 단어는 ${len}글자입니다.`
+        };
+        room.chat.push(autoHint1);
+        io.to(roomCode).emit("newHint", autoHint1);
+      }
+
+      // 15번째 질문: 초성 힌트
+      if (room.questionCount === 15) {
+        const chosung = computeChosung(room.word);
+        const autoHint2 = {
+          type: "hint",
+          from: room.hostName || "출제자",
+          text: `정답 단어의 초성은 ${chosung} 입니다.`
+        };
+        room.chat.push(autoHint2);
+        io.to(roomCode).emit("newHint", autoHint2);
+      }
+    }
+
+    // 채팅 전체 상태 갱신
     emitRoomChatState(roomCode);
   });
 
-  // ====== [NEW CHAT] 참가자/출제자 일반 채팅 메시지 ======
+  // ====== 일반 채팅 메시지 (수다 채팅) ======
   // payload: { roomCode, text, nickname }
-  // 이건 질문/힌트랑 별개로 그냥 자유 채팅
   socket.on("sendChatMessage", ({ roomCode, text, nickname }) => {
     const room = rooms[roomCode];
     if (!room) return;
     if (!text || !text.trim()) return;
 
-    // 닉 결정: 넘어온 nickname이 우선, 없으면 guessers/host에서 찾는다
+    // 보낸 사람 닉네임 결정
     let senderName = nickname && nickname.trim();
     if (!senderName) {
       if (socket.id === room.hostId) {
@@ -418,10 +473,10 @@ io.on("connection", (socket) => {
     // 로그에 추가
     room.chat.push(chatMsg);
 
-    // 방 전체에 새 메시지 밀어주기
+    // 방 전체에 새 메시지 push
     io.to(roomCode).emit("newChatMessage", chatMsg);
 
-    // 전체 상태도 동기화해주면 프론트가 새로 들어온 애도 consistent
+    // 전체 상태도 다시 전송해서 동기화
     emitRoomChatState(roomCode);
   });
 
@@ -452,17 +507,18 @@ io.on("connection", (socket) => {
     if (kickedSocket) {
       kickedSocket.leave(roomCode);
       kickedSocket.emit("kicked", { reason: "host_kick" });
-      // kickedSocket.disconnect(true); // 강제 연결 종료하고 싶으면 주석 해제
+      // 완전 연결 끊고 싶으면 아래 주석 해제
+      // kickedSocket.disconnect(true);
     }
 
-    // 시스템 메시지로 기록
+    // 시스템 메시지로 채팅 로그에 남겨도 됨
     room.chat.push({
       type: "system",
       from: "[SYSTEM]",
       text: `${removed.name || "참가자"} 님이 강퇴되었습니다.`
     });
 
-    // 최신 상태 방송
+    // 인원 목록과 채팅상태 다시 방송
     emitPlayers(roomCode);
     emitRoomChatState(roomCode);
   });
@@ -474,8 +530,10 @@ io.on("connection", (socket) => {
       if (!room) continue;
 
       if (room.hostId === socket.id) {
-        // 방장 나감 -> 방 폭파
+        // 방장 나갔으므로 방 안에 남아 있는 참가자들에게 알림
         io.to(roomCode).emit("roomClosed");
+
+        // 방 삭제
         cleanupRoom(roomCode);
         continue;
       }
@@ -485,7 +543,7 @@ io.on("connection", (socket) => {
       if (idx !== -1) {
         const [leaver] = room.guessers.splice(idx, 1);
 
-        // 나간 사실은 시스템 메시지로 남겨도 상관없음 (선택)
+        // (선택) 시스템 메시지로 남기고 싶으면 주석 해제
         // room.chat.push({
         //   type: "system",
         //   from: "[SYSTEM]",
