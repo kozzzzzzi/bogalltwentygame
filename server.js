@@ -430,15 +430,17 @@ io.on("connection", (socket) => {
 
       // 15번째 질문: 초성 힌트
       if (room.questionCount === 15) {
-        const chosung = computeChosung(room.word);
-        const autoHint2 = {
-          type: "hint",
-          from: room.hostName || "출제자",
-          text: `정답 단어의 초성은 ${chosung} 입니다.`
-        };
-        room.chat.push(autoHint2);
-        io.to(roomCode).emit("newHint", autoHint2);
-      }
+  // 첫 글자만 초성 뽑기
+  const firstChar = room.word[0] || "";
+  const firstChosung = computeChosung(firstChar); // 하나만 넣으면 하나만 리턴
+  const autoHint2 = {
+    type: "hint",
+    from: room.hostName || "출제자",
+    text: `첫 글자 초성은 ${firstChosung} 입니다.`
+  };
+  room.chat.push(autoHint2);
+  io.to(roomCode).emit("newHint", autoHint2);
+}
     }
 
     // 채팅 전체 상태 갱신
