@@ -454,34 +454,54 @@ io.on("connection", (socket) => {
 
   // ====== 일반 채팅 메시지 ======
   socket.on("sendChatMessage", ({ roomCode, text, nickname }) => {
-    const room = rooms[roomCode];
-    if (!room) return;
-    if (!text || !text.trim()) return;
+  const room = rooms[roomCode];
+  if (!room) return;
+  if (!text || !text.trim()) return;
 
-    // 보낸 사람 닉네임 결정
-    let senderName = nickname && nickname.trim();
-    if (!senderName) {
-      if (socket.id === room.hostId) {
-        senderName = room.hostName || "출제자";
-      } else {
-        const g = room.guessers.find((gg) => gg.id === socket.id);
-        senderName = g ? g.name : "참가자";
-      }
+  const trimmed = text.trim();
+
+  // 닉네임 설정 (기존 코드 유지)
+  let senderName = nickname && nickname.trim();
+  if (!senderName) {
+    if (socket.id === room.hostId) {
+      senderName = room.hostName || "출제자";
+    } else {
+      const g = room.guessers.find((gg) => gg.id === socket.id);
+      senderName = g ? g.name : "참가자";
     }
+  }
 
-    const chatMsg = {
-      type: "chat",
-      from: senderName,
-      text: text.trim(),
-      ts: Date.now()
-    };
+  // ===== 🎭 특수 이펙트 명령어 처리 =====
+  switch (trimmed) {
+    case "/똥":
+      io.to(roomCode).emit("effect", { type: "poopRain" }); // 💩
+      return;
+    case "/붐따":
+      io.to(roomCode).emit("effect", { type: "boomDown" }); // 👎
+      return;
+    case "/붐업":
+      io.to(roomCode).emit("effect", { type: "boomUp" }); // 👍
+      return;
+    case "/게이":
+      io.to(roomCode).emit("effect", { type: "gayFlag" }); // 🏳️‍🌈
+      return;
+    case "/미침":
+      io.to(roomCode).emit("effect", { type: "skull" }); // ☠️
+      return;
+  }
 
-    room.chat.push(chatMsg);
+  // ===== 일반 채팅 메시지 =====
+  const chatMsg = {
+    type: "chat",
+    from: senderName,
+    text: trimmed,
+    ts: Date.now()
+  };
 
-    io.to(roomCode).emit("newChatMessage", chatMsg);
-
-    emitRoomChatState(roomCode);
-  });
+  room.chat.push(chatMsg);
+  io.to(roomCode).emit("newChatMessage", chatMsg);
+  emitRoomChatState(roomCode);
+});
 
   // ====== 출제자가 참가자 강퇴 ======
   socket.on("kickPlayer", ({ roomCode, playerId }) => {
